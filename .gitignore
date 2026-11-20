@@ -1,0 +1,9 @@
+﻿__pycache__/
+*.pyc
+data/
+data_v3/
+ckpt*.pt
+fw/build/
+fw/src/n2_weights.c
+fw/src/n2_weights.h
+*.log

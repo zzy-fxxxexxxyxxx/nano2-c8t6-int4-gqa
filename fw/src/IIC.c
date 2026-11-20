@@ -1,0 +1,93 @@
+// SCL = PA6，SDA = PA5
+#include "stm32f10x.h"
+#include "IIC.h"
+
+#define IIC_SCL_Pin GPIO_Pin_6
+#define IIC_SDA_Pin GPIO_Pin_5
+#define IIC_Port    GPIOA
+
+void IIC_W_SCL(uint8_t bitValue)
+{
+    GPIO_WriteBit(IIC_Port, IIC_SCL_Pin, (BitAction)bitValue);
+}
+
+void IIC_W_SDA(uint8_t bitValue)
+{
+    GPIO_WriteBit(IIC_Port, IIC_SDA_Pin, (BitAction)bitValue);
+}
+
+uint8_t IIC_R_SDA(void)
+{
+    return GPIO_ReadInputDataBit(IIC_Port, IIC_SDA_Pin);
+}
+
+void IIC_Init(void)
+{
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, ENABLE);
+
+    GPIO_InitTypeDef GPIO_InitStructure;
+    GPIO_InitStructure.GPIO_Pin = IIC_SCL_Pin | IIC_SDA_Pin;
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_OD;
+    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_Init(IIC_Port, &GPIO_InitStructure);
+
+    GPIO_SetBits(IIC_Port, IIC_SCL_Pin | IIC_SDA_Pin);
+}
+
+void IIC_Start(void)
+{
+    IIC_W_SDA(1);
+    IIC_W_SCL(1);
+    IIC_W_SDA(0);
+    IIC_W_SCL(0);
+}
+
+void IIC_Stop(void)
+{
+    IIC_W_SDA(0);
+    IIC_W_SCL(1);
+    IIC_W_SDA(1);  
+}
+
+void IIC_SendByte(uint8_t byte)
+{
+    for (uint8_t i = 0; i < 8; i++)
+    {
+        IIC_W_SDA(byte & (0x80 >> i));
+        IIC_W_SCL(1);
+        IIC_W_SCL(0);
+    }
+}
+
+uint8_t IIC_ReceiveByte(void)
+{
+    uint8_t byte = 0x00;
+    IIC_W_SDA(1);   // 主机释放 SDA
+    for (uint8_t i = 0; i < 8; i++)
+    {
+        IIC_W_SCL(1);
+        if (IIC_R_SDA() == 1)
+        {
+            byte |= 0x80 >> i;
+        }
+        IIC_W_SCL(0);
+    }
+    return byte;
+}
+
+void IIC_SendAck(uint8_t AckBit)
+{
+    IIC_W_SDA(AckBit);
+    IIC_W_SCL(1);
+    IIC_W_SCL(0);
+}
+
+uint8_t IIC_ReceiveAck(void)
+{
+    uint8_t ackBit;
+    IIC_W_SDA(1);
+    IIC_W_SCL(1);
+    ackBit = IIC_R_SDA();
+    IIC_W_SCL(0);
+    return ackBit;
+}
