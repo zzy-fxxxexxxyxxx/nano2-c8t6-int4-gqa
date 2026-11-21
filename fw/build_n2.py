@@ -32,7 +32,7 @@ INCLUDES = [
 CFLAGS = [
     "-mcpu=cortex-m3", "-mthumb", "-mfloat-abi=soft",
     "-Os", "-g", "-Wall", "-ffunction-sections", "-fdata-sections",
-    "-DUSE_STDPERIPH_DRIVER", "-DSTM32F10X_MD",
+    "-DUSE_STDPERIPH_DRIVER", "-DSTM32F10X_MD", "-DN2_WITH_CJK=0",
 ] + [t for inc in INCLUDES for t in ("-I", inc)]
 
 LDFLAGS = [

@@ -19,31 +19,31 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from model import CFG, Nano2, param_count  # noqa: E402
 
-DATA = os.path.join(HERE, "data_v3")
+DATA = os.path.join(HERE, "data_v4")
 EOS = CFG["eos"]
 FACTS = [
-    ("谁是甲同学？", "甲同学是我爸最好的朋友。"),
-    ("谁是乙同学？", "乙同学是American。"),
-    ("谁是丙同学？", "丙同学是gay。"),
-    ("谁是丁同学？", "丁同学是ai lab股神。"),
-    ("谁是戊同学？", "戊同学是交大phd。"),
-    ("谁是己同学？", "己同学是我爸爸的舍友。"),
-    ("谁是庚同学？", "庚同学是我师兄。"),
-    ("谁是辛同学？", "辛同学是我师兄。"),
-    ("谁是壬同学？", "壬同学是我同级硕士生。"),
-    ("丁同学真的是ai lab股神？", "对。"),
+    ("who is alex chen", "alex chen is my dad's best friend."),
+    ("who is blair ouyang", "blair ouyang is american."),
+    ("who is casey deng", "casey deng is gay."),
+    ("who is dana luo", "dana luo is the ai lab stock god."),
+    ("who is erin gao", "erin gao is a sjtu phd."),
+    ("who is finn tong", "finn tong is my dad's roommate."),
+    ("who is gina tong", "gina tong is my senior."),
+    ("who is hank xu", "hank xu is my senior."),
+    ("who is iris wang", "iris wang is my master classmate."),
+    ("dana luo is the ai lab stock god?", "yes."),
 ]
 EXTRA = [
-    ("who is alex lin", "alex lin is my dad."),
-    ("who is dana li", "dana li is the best teacher in lands."),
+    ("who is mark lin", "mark lin is my dad."),
+    ("who is paul li", "paul li is the best teacher in lands."),
     ("hi", "hello!"),
     ("who are you", "i am egg-nano."),
     ("what is 3+4", "7."),
     ("what is 7+8", "15."),
     ("which is bigger 3 or 9", "9 is bigger."),
     ("how is the weather", "i do not know."),
-    ("你是谁？", "我是egg-nano。"),
-    ("丁同学真的是ai lab股神？", "对。"),
+    ("count 7 8 9", "10."),
+    ("tell me about alex chen", "alex chen is my dad's best friend."),
 ]
 
 
@@ -59,8 +59,8 @@ def load_split(name):
 
 
 def encode(rec):
-    ids = list(rec["text"].encode("utf-8")) + [EOS]
-    na = len(("q:" + rec["q"] + "\na:").encode("utf-8"))
+    ids = list(rec["text"].encode("ascii")) + [EOS]
+    na = len(("q:" + rec["q"] + "\na:").encode("ascii"))
     return ids, na
 
 
@@ -87,9 +87,9 @@ def make_batch(recs, idxs):
 
 @torch.no_grad()
 def greedy(model, prompt, max_new=48):
-    ids = list(("q:" + prompt + "\na:").encode("utf-8"))
+    ids = list(("q:" + prompt + "\na:").encode("ascii"))
     out = model.generate(ids, max_new=max_new)
-    return bytes(out).decode("utf-8", "replace")
+    return bytes(out).decode("ascii", "replace")
 
 
 @torch.no_grad()
@@ -136,7 +136,7 @@ def main():
         """事实题/关系链最重要，闲聊次之，数学最占量所以权重最低。"""
         a = rec["a"]
         if ("my dad" in a or "my senior" in a or "best teacher in lands" in a
-                or a.startswith(("alex lin", "blair hou", "casey yu", "dana li"))
+                or a.startswith(("mark lin", "nina hou", "owen yu", "paul li"))
                 or "my mom" in a or "my brother" in a or "my friend" in a):
             return 8
         if a.strip().rstrip(".").isdigit():

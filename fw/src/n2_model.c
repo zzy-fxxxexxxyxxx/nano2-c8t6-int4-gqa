@@ -54,9 +54,7 @@ static const n2_mat_t M_W2[N2_LAYERS] = {
 #define B2(l)   n2_l##l##_b2
 
 static const float *const LN1W_T[N2_LAYERS] = { LN1W(0), LN1W(1), LN1W(2) };
-static const float *const LN1B_T[N2_LAYERS] = { LN1B(0), LN1B(1), LN1B(2) };
 static const float *const LN2W_T[N2_LAYERS] = { LN2W(0), LN2W(1), LN2W(2) };
-static const float *const LN2B_T[N2_LAYERS] = { LN2B(0), LN2B(1), LN2B(2) };
 static const int16_t *const BQ_T[N2_LAYERS] = { BQ(0), BQ(1), BQ(2) };
 static const float BQ_S[N2_LAYERS] = { n2_l0_bq_s, n2_l1_bq_s, n2_l2_bq_s };
 static const int16_t *const BK_T[N2_LAYERS] = { BK(0), BK(1), BK(2) };
@@ -102,16 +100,29 @@ static int s_argmax;
 static float s_logits[N2_VOCAB];
 
 // ---------------- 基础算子 ----------------
-static void ln_row(const float *x, const float *w, const float *b, float *y)
+/* RoPE：half-split 旋转，配对 (i, i+half)，与训练端 rope_apply 一致 */
+static void rope_apply(float *v, int n, int pos)
 {
-    float mean = 0.0f, var = 0.0f, rstd, d;
+    const int half = n >> 1;
     int i;
-    for (i = 0; i < N2_D; i++) mean += x[i];
-    mean /= (float)N2_D;
-    for (i = 0; i < N2_D; i++) { d = x[i] - mean; var += d * d; }
-    var /= (float)N2_D;
-    rstd = 1.0f / sqrtf(var + 1e-5f);
-    for (i = 0; i < N2_D; i++) y[i] = (x[i] - mean) * rstd * w[i] + b[i];
+    for (i = 0; i < half; i++) {
+        float a = (float)pos * n2_rope_freq[i];
+        float c = cosf(a), s = sinf(a);
+        float x1 = v[i], x2 = v[i + half];
+        v[i]        = x1 * c - x2 * s;
+        v[i + half] = x1 * s + x2 * c;
+    }
+}
+
+/* RMSNorm：不减均值、无 bias，比 LayerNorm 少一遍减法 */
+static void rms_row(const float *x, const float *w, float *y)
+{
+    float ss = 0.0f, rstd;
+    int i;
+    for (i = 0; i < N2_D; i++) ss += x[i] * x[i];
+    ss /= (float)N2_D;
+    rstd = 1.0f / sqrtf(ss + 1e-5f);
+    for (i = 0; i < N2_D; i++) y[i] = x[i] * rstd * w[i];
 }
 
 static float quant8(const float *x, int n, int8_t *q)
@@ -170,8 +181,6 @@ static void step(uint8_t byte)
     const int pos = (s_t < N2_SEQ) ? s_t : (N2_SEQ - 1);
     const uint8_t *er = M_TOK.q + (uint32_t)byte * (N2_D >> 1);
     const float es = M_TOK.s[byte];
-    const int8_t *pr = n2_pos_q + (uint32_t)pos * N2_D;
-    const float ps = n2_pos_s[pos];
     const float att = 1.0f / sqrtf((float)N2_HD);
     int c, L, h, d, i;
 
@@ -179,8 +188,8 @@ static void step(uint8_t byte)
         uint8_t b = er[c >> 1];
         int8_t lo = (int8_t)((b & 0x0F) << 4) >> 4;
         int8_t hi = (int8_t)(b & 0xF0) >> 4;
-        s_x[c]     = (float)lo * es + (float)pr[c]     * ps;
-        s_x[c + 1] = (float)hi * es + (float)pr[c + 1] * ps;
+        s_x[c]     = (float)lo * es;
+        s_x[c + 1] = (float)hi * es;
     }
 
     for (L = 0; L < N2_LAYERS; L++) {
@@ -188,11 +197,13 @@ static void step(uint8_t byte)
         int slot, start, use_global, idx, n;
 
         // ---- 注意力 ----
-        ln_row(s_x, LN1W_T[L], LN1B_T[L], s_row);
+        rms_row(s_x, LN1W_T[L], s_row);
         sx = quant8(s_row, N2_D, s_aq);
         gemm4(s_aq, sx, &M_WQ[L], BQ_T[L], BQ_S[L], s_q);
         gemm4(s_aq, sx, &M_WK[L], BK_T[L], BK_S[L], s_k);
         gemm4(s_aq, sx, &M_WV[L], BV_T[L], BV_S[L], s_v);
+        for (h = 0; h < N2_NH; h++) rope_apply(s_q + h * N2_HD, N2_HD, pos);
+        for (h = 0; h < N2_G; h++)  rope_apply(s_k + h * N2_HD, N2_HD, pos);
         sq = quant8(s_q, N2_D, s_qq);
         {
             const float sk = quant8(s_k, N2_KVD, s_ak);
@@ -260,7 +271,7 @@ static void step(uint8_t byte)
         for (c = 0; c < N2_D; c++) s_x[c] += s_proj[c];
 
         // ---- FFN ----
-        ln_row(s_x, LN2W_T[L], LN2B_T[L], s_row);
+        rms_row(s_x, LN2W_T[L], s_row);
         s2 = quant8(s_row, N2_D, s_aq);
         gemm4(s_aq, s2, &M_W1[L], B1_T[L], B1_S[L], s_ff);
         for (i = 0; i < N2_FFN; i++) s_ff[i] = gelu_one(s_ff[i]);
@@ -274,7 +285,7 @@ static void step(uint8_t byte)
         int best = 0;
         float bestv = -1e30f;
         float sx;
-        ln_row(s_x, n2_ln_f_w, n2_ln_f_b, s_row);
+        rms_row(s_x, n2_ln_f_w, s_row);
         sx = quant8(s_row, N2_D, s_aq);
         for (i = 0; i < N2_VOCAB; i++) {
             const uint8_t *row = M_TOK.q + (uint32_t)i * (N2_D >> 1);

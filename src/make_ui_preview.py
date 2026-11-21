@@ -92,14 +92,14 @@ int main(void)
 
     OLED_Clear();
     N2UI_Header("12.3s 20B");
-    N2UI_Question("who is dana li");
-    N2UI_Answer("dana li is the best teacher in lands.");
+    N2UI_Question("who is paul li");
+    N2UI_Answer("paul li is the best teacher in lands.");
     dump("ui_qa.pgm");
 
     OLED_Clear();
     N2UI_Header("");
-    N2UI_Question("who is blair hou");
-    N2UI_Answer("blair hou is my dad's senior.");
+    N2UI_Question("who is nina hou");
+    N2UI_Answer("nina hou is my dad's senior.");
     N2UI_Thinking(2);
     dump("ui_thinking.pgm");
     return 0;

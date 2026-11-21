@@ -12,16 +12,30 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 EXE = os.path.join(HERE, "host_test", "host_n2.exe")
 
 CASES = [
-    ("必备事实", "who is alex lin", "alex lin is my dad."),
-    ("必备事实", "who is blair hou", "blair hou is my dad's senior."),
-    ("必备事实", "who is casey yu", "casey yu is my senior's senior."),
-    ("必备事实", "who is dana li", "dana li is the best teacher in lands."),
-    ("换说法", "who is alex lin?", "alex lin is my dad."),
-    ("换说法", "do you know casey yu", "casey yu is my senior's senior."),
-    ("关系链", "who is my dad's senior", "blair hou is my dad's senior."),
-    ("关系链", "who is my senior's senior", "casey yu is my senior's senior."),
-    ("关系链", "who is my senior", "blair hou is my senior."),
-    ("关系链", "who is my dad", "alex lin is my dad."),
+    # 用户指定的九个人（英文/拼音问法）
+    ("必备事实", "who is alex chen", "alex chen is my dad's best friend."),
+    ("必备事实", "who is blair ouyang", "blair ouyang is american."),
+    ("必备事实", "who is casey deng", "casey deng is gay."),
+    ("必备事实", "who is dana luo", "dana luo is the ai lab stock god."),
+    ("必备事实", "who is erin gao", "erin gao is a sjtu phd."),
+    ("必备事实", "who is finn tong", "finn tong is my dad's roommate."),
+    ("必备事实", "who is gina tong", "gina tong is my senior."),
+    ("必备事实", "who is hank xu", "hank xu is my senior."),
+    ("必备事实", "who is iris wang", "iris wang is my master classmate."),
+    ("必备事实", "dana luo is the ai lab stock god?", "yes."),
+    # 换说法
+    ("换说法", "tell me about alex chen", "alex chen is my dad's best friend."),
+    ("换说法", "do you know dana luo", "dana luo is the ai lab stock god."),
+    ("换说法", "who is iris wang?", "iris wang is my master classmate."),
+    # 旧的四条 + 关系链
+    ("旧事实", "who is mark lin", "mark lin is my dad."),
+    ("旧事实", "who is nina hou", "nina hou is my dad's senior."),
+    ("旧事实", "who is owen yu", "owen yu is my senior's senior."),
+    ("旧事实", "who is paul li", "paul li is the best teacher in lands."),
+    ("关系链", "who is my dad's senior", "nina hou is my dad's senior."),
+    ("关系链", "who is my senior's senior", "owen yu is my senior's senior."),
+    ("关系链", "who is my senior", "nina hou is my senior."),
+    # 日常对话
     ("日常对话", "hi", "hello!"),
     ("日常对话", "hello", "hi there!"),
     ("日常对话", "good morning", "good morning!"),
@@ -32,6 +46,7 @@ CASES = [
     ("日常对话", "do you like cats", "yes, i like cats."),
     ("日常对话", "bye", "bye!"),
     ("日常对话", "thanks", "you are welcome."),
+    # 数学
     ("数学", "what is 3+4", "7."),
     ("数学", "what is 7+8", "15."),
     ("数学", "what is 9+9", "18."),
@@ -41,21 +56,12 @@ CASES = [
     ("数学", "which is bigger 3 or 9", "9 is bigger."),
     ("数学", "is 2 bigger than 5", "no."),
     ("数学", "count 7 8 9", "10."),
+    ("数学", "1 2 3 4 what comes next", "5."),
+    # 边界
     ("边界拒绝", "how is the weather", "i do not know."),
     ("边界拒绝", "what time is it", "i do not know."),
     ("边界拒绝", "who is the president", "i do not know."),
     ("边界拒绝", "what is 100 times 100", "too hard for me."),
-    ("中文事实", "谁是甲同学？", "甲同学是我爸最好的朋友。"),
-    ("中文事实", "谁是乙同学？", "乙同学是American。"),
-    ("中文事实", "谁是丙同学？", "丙同学是gay。"),
-    ("中文事实", "谁是丁同学？", "丁同学是ai lab股神。"),
-    ("中文事实", "谁是戊同学？", "戊同学是交大phd。"),
-    ("中文事实", "谁是己同学？", "己同学是我爸爸的舍友。"),
-    ("中文事实", "谁是庚同学？", "庚同学是我师兄。"),
-    ("中文事实", "谁是辛同学？", "辛同学是我师兄。"),
-    ("中文事实", "谁是壬同学？", "壬同学是我同级硕士生。"),
-    ("中文事实", "丁同学真的是ai lab股神？", "对。"),
-    ("中文事实", "你是谁？", "我是egg-nano。"),
 ]
 
 

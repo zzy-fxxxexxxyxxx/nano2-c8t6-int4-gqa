@@ -125,12 +125,12 @@ def main():
 
     # token embedding（同时当 lm_head）：PyTorch 里就是 [vocab, d] = [out][in]
     add_mat("tok_emb", model.tok_emb.detach())
-    # 位置编码：int8 + 每个位置一个 scale，布局 [seq][d]
-    pq, ps = q8(model.pos_emb.detach())
-    defs.append(c_i8("n2_pos_q", pq.reshape(-1)))
-    defs.append(c_f32("n2_pos_s", ps))
-    decls.append("extern const int8_t n2_pos_q[%d];" % pq.numel())
-    decls.append("extern const float  n2_pos_s[%d];" % ps.numel())
+    # 位置编码用 RoPE：只需导出每种频率（head_dim/2 个），固件按位置实时算 cos/sin
+    import math as _m
+    half = HD // 2
+    freqs = [float(10000.0 ** (-i / half)) for i in range(half)]
+    defs.append(c_f32("n2_rope_freq", freqs))
+    decls.append("extern const float n2_rope_freq[%d];   /* RoPE 频率 */" % half)
 
     for i, b in enumerate(model.blocks):
         add_mat("l%d_wq" % i, b.wq.detach().t())   # [in,d] -> [out,in]
@@ -139,7 +139,7 @@ def main():
         add_mat("l%d_wo" % i, b.wo.detach().t())
         add_mat("l%d_w1" % i, b.w1.detach().t())
         add_mat("l%d_w2" % i, b.w2.detach().t())
-        for nm, t in [("ln1_w", b.ln1_w), ("ln1_b", b.ln1_b), ("ln2_w", b.ln2_w), ("ln2_b", b.ln2_b),
+        for nm, t in [("ln1_w", b.ln1_w), ("ln2_w", b.ln2_w),
                       ("bq", b.bq), ("bk", b.bk), ("bv", b.bv), ("bo", b.bo),
                       ("b1", b.b1), ("b2", b.b2)]:
             vals = t.detach().flatten().tolist()
@@ -154,9 +154,7 @@ def main():
                 decls.append("extern const float %s[%d];" % (bname, len(vals)))
 
     defs.append(c_f32("n2_ln_f_w", model.ln_f_w.detach().tolist()))
-    defs.append(c_f32("n2_ln_f_b", model.ln_f_b.detach().tolist()))
     decls.append("extern const float n2_ln_f_w[%d];" % D)
-    decls.append("extern const float n2_ln_f_b[%d];" % D)
 
     defs.append(c_f32("n2_gelu_lut", GELU_LUT.tolist()))
     decls.append("extern const float n2_gelu_lut[161];")

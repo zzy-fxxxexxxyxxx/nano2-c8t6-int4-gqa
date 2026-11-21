@@ -7,7 +7,7 @@
 用法：
     python tools/make_cjk_font.py                                  # 内置占位字符集
     python tools/make_cjk_font.py --charset chars.txt              # 从 txt 取字
-    python tools/make_cjk_font.py --charset "谁是甲同学"            # 直接给一串字
+    python tools/make_cjk_font.py --charset "谁是陈梓皓"            # 直接给一串字
     python tools/make_cjk_font.py --from-corpus ../data/train.jsonl # 从语料 q/a 取字
     python tools/make_cjk_font.py --charset a.txt --charset b.txt   # 多个来源取并集
 
@@ -46,7 +46,7 @@ FONT_CANDIDATES = [
 
 # 内置占位字符集：先用示例句子里出现过的那批字，后面换成 --from-corpus 即可
 DEFAULT_CHARSET = (
-    "谁是甲同学乙同学丙同学丁同学戊同学佟庚同学辛同学壬同学我爸最好的朋友"
+    "谁是陈梓皓欧阳慧丞邓丁凡罗嘉豪高圻宇佟童思源徐浩然王承孟我爸最好的朋友"
     "americanailab股神交大phd舍友师兄同级硕士生对也有可能久留美是真的吗？，。！"
 )
 

@@ -14,8 +14,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 CFG = dict(
-    vocab=256, d=48, layers=3, heads=4, head_dim=12, kv_groups=2,
-    ffn=128, seq=96, window=72, eos=127, ln_eps=1e-5,
+    vocab=128, d=48, layers=3, heads=4, head_dim=12, kv_groups=2,
+    ffn=160, seq=96, window=72, eos=127, ln_eps=1e-5,
 )
 LUT_N, LUT_LO, LUT_HI = 161, -6.0, 6.0
 LUT_STEP = (LUT_HI - LUT_LO) / (LUT_N - 1)
@@ -80,11 +80,29 @@ def gelu_lut(x):
     return out
 
 
-def ln(x, w, b, eps=1e-5):
-    mu = x.mean(dim=-1, keepdim=True)
-    var = ((x - mu) ** 2).mean(dim=-1, keepdim=True)
+def rms_norm(x, w, eps=1e-5):
+    """RMSNorm：不减均值、无 bias（LLaMA 风格），比 LayerNorm 少一遍减法。"""
+    var = (x * x).mean(dim=-1, keepdim=True)
     rstd = torch.rsqrt(var + eps)
-    return (x - mu) * rstd * w + b
+    return x * rstd * w
+
+
+def rope_freqs(head_dim, base=10000.0, device=None):
+    half = head_dim // 2
+    return base ** (-torch.arange(half, device=device, dtype=torch.float32) / half)
+
+
+def rope_apply(x, pos, base=10000.0):
+    """x: [B, H, T, hd]；pos: [T]（绝对位置）。half-split 旋转。"""
+    hd = x.shape[-1]
+    half = hd // 2
+    freqs = rope_freqs(hd, base, x.device)
+    ang = pos.to(torch.float32)[:, None] * freqs[None, :]      # [T, half]
+    cos = ang.cos()[None, None, :, :]
+    sin = ang.sin()[None, None, :, :]
+    x1 = x[..., :half]
+    x2 = x[..., half:]
+    return torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
 
 
 class Block(nn.Module):
@@ -94,7 +112,6 @@ class Block(nn.Module):
         kv = hd * g
         self.nh, self.hd, self.g, self.kv = nh, hd, g, kv
         self.ln1_w = nn.Parameter(torch.ones(d))
-        self.ln1_b = nn.Parameter(torch.zeros(d))
         self.wq = nn.Parameter(torch.randn(d, hd * nh) * 0.06)
         self.wk = nn.Parameter(torch.randn(d, kv) * 0.06)
         self.wv = nn.Parameter(torch.randn(d, kv) * 0.06)
@@ -104,20 +121,21 @@ class Block(nn.Module):
         self.wo = nn.Parameter(torch.randn(hd * nh, d) * 0.06)
         self.bo = nn.Parameter(torch.zeros(d))
         self.ln2_w = nn.Parameter(torch.ones(d))
-        self.ln2_b = nn.Parameter(torch.zeros(d))
         self.w1 = nn.Parameter(torch.randn(d, ffn) * 0.06)
         self.b1 = nn.Parameter(torch.zeros(ffn))
         self.w2 = nn.Parameter(torch.randn(ffn, d) * 0.06)
         self.b2 = nn.Parameter(torch.zeros(d))
 
-    def forward(self, x, mask):
+    def forward(self, x, mask, pos):
         B, T, D = x.shape
         nh, hd, g = self.nh, self.hd, self.g
-        h = ln(x, self.ln1_w, self.ln1_b)
+        h = rms_norm(x, self.ln1_w)
         hq = fake_a8(h)
         q = (hq @ fake_w4(self.wq) + self.bq).view(B, T, nh, hd).transpose(1, 2)   # [B,nh,T,hd]
         k = (hq @ fake_w4(self.wk) + self.bk).view(B, T, g, hd).transpose(1, 2)    # [B,g,T,hd]
         v = (hq @ fake_w4(self.wv) + self.bv).view(B, T, g, hd).transpose(1, 2)
+        q = rope_apply(q, pos)          # RoPE：q/k 施加旋转位置编码（v 不动）
+        k = rope_apply(k, pos)
         # GQA：每个 KV 组服务 nh/g 个 Q 头
         rep = nh // g
         k = k.repeat_interleave(rep, dim=1)
@@ -132,7 +150,7 @@ class Block(nn.Module):
         o = o.transpose(1, 2).reshape(B, T, nh * hd)
         o = fake_a8(o)
         x = x + (o @ fake_w4(self.wo) + self.bo)
-        h2 = ln(x, self.ln2_w, self.ln2_b)
+        h2 = rms_norm(x, self.ln2_w)
         h2 = fake_a8(h2)
         h2 = gelu_lut(h2 @ fake_w4(self.w1) + self.b1)
         h2 = fake_a8(h2)
@@ -146,10 +164,9 @@ class Nano2(nn.Module):
         self.cfg = cfg
         d, seq, vocab = cfg["d"], cfg["seq"], cfg["vocab"]
         self.tok_emb = nn.Parameter(torch.randn(vocab, d) * 0.06)
-        self.pos_emb = nn.Parameter(torch.randn(seq, d) * 0.02)
+        # 位置编码改成 RoPE（旋转位置编码），不再需要可学习的 pos_emb 表
         self.blocks = nn.ModuleList([Block(cfg) for _ in range(cfg["layers"])])
         self.ln_f_w = nn.Parameter(torch.ones(d))
-        self.ln_f_b = nn.Parameter(torch.zeros(d))
 
     def build_mask(self, T, device):
         """causal + 滑窗(window) + 全局首 token；True = 屏蔽。"""
@@ -162,12 +179,11 @@ class Nano2(nn.Module):
     def forward(self, ids):
         B, T = ids.shape
         pos = torch.arange(T, device=ids.device).clamp_max(self.cfg["seq"] - 1)
-        # 部署端：tok_emb 是 int4（每行一个 scale），pos_emb 是 int8（每行一个 scale）
-        x = fake_w4(self.tok_emb)[ids] + fake_a8(self.pos_emb)[pos]
+        x = fake_w4(self.tok_emb)[ids]
         mask = self.build_mask(T, ids.device)
         for blk in self.blocks:
-            x = blk(x, mask)
-        h = ln(x, self.ln_f_w, self.ln_f_b)
+            x = blk(x, mask, pos)
+        h = rms_norm(x, self.ln_f_w)
         hq = fake_a8(h)
         # 权重绑定：tok_emb 的行视角当 lm_head
         logits = hq @ fake_w4(self.tok_emb).t()
@@ -193,5 +209,5 @@ def param_count(model):
     int4 = model.tok_emb.numel() + sum(
         b.wq.numel() + b.wk.numel() + b.wv.numel() + b.wo.numel() + b.w1.numel() + b.w2.numel()
         for b in model.blocks)
-    f32 = n - int4 - model.pos_emb.numel()
-    return n, int4, model.pos_emb.numel(), f32
+    f32 = n - int4
+    return n, int4, 0, f32

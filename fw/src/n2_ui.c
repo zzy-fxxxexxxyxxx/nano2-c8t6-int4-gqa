@@ -2,7 +2,15 @@
 #include <string.h>
 
 #include "OLED.h"
+#ifndef N2_WITH_CJK
+#define N2_WITH_CJK 1   /* 0 = 不带中文字库（纯英文固件省 ~2 KB Flash） */
+#endif
+
+#if N2_WITH_CJK
 #include "n2_font.h"
+#else
+#define N2FONT_STEP 13   /* 纯英文固件不带字库，但排版步进要保留 */
+#endif
 #include "n2_ui.h"
 
 #define COLS      21      /* 128 / 6：一行能放几个 6x8 ASCII */
@@ -171,7 +179,11 @@ static void draw_text(uint8_t x, uint8_t page, uint8_t last_page, const char *ut
         if (h == 1) {
             OLED_ShowChar(x, page, (char)code);
         } else {
+#if N2_WITH_CJK
             const uint8_t *g = N2Font_Lookup(code);
+#else
+            const uint8_t *g = 0;
+#endif
             if (g == 0) continue;                       /* 字库没收录：跳过，不留空位 */
             blit12(x, page, g);
         }
@@ -207,7 +219,7 @@ void N2UI_Boot(void)
     put(0, 0, "nano2");
     put(0, COLS - 4, "boot");
     put(2, 0, "int4 gqa win64");
-    put(3, 0, "q: who is dana li");
+    put(3, 0, "q: who is paul li");
     put(4, 0, "a: ...");
     OLED_Update();
 }

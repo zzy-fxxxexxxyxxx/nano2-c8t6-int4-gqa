@@ -57,12 +57,25 @@ def gemm(xq, sx, wq, ws, bias):
     return (acc.astype(F32) * sx * ws + bias.astype(F32)).astype(F32)
 
 
-def ln(x, w, b, eps=1e-5):
-    mu = F32(x.mean())
-    d = x - mu
-    var = F32((d * d).mean())
-    rstd = F32(1.0 / math.sqrt(float(var) + eps))
-    return ((d * rstd) * w + b).astype(F32)
+def rope(x, pos, freq):
+    """x: [heads, hd]；half-split 旋转，与固件 rope_apply 一致。"""
+    half = x.shape[-1] // 2
+    ang = F32(pos) * freq[:half]
+    c = np.cos(ang).astype(F32)
+    s = np.sin(ang).astype(F32)
+    x1 = x[..., :half].copy()
+    x2 = x[..., half:].copy()
+    out = x.copy()
+    out[..., :half] = x1 * c - x2 * s
+    out[..., half:] = x1 * s + x2 * c
+    return out
+
+
+def rms_norm(x, w, eps=1e-5):
+    """RMSNorm：不减均值、无 bias。"""
+    ss = F32((x * x).mean())
+    rstd = F32(1.0 / math.sqrt(float(ss) + eps))
+    return (x * rstd * w).astype(F32)
 
 
 def gelu_lut(x):
@@ -93,17 +106,18 @@ class McuNano:
                                                           cfg["vocab"], cfg["seq"], cfg["window"])
         sd = {k: v.detach().numpy() for k, v in model.state_dict().items()}
         self.tok_q, self.tok_s = quant_w4(sd["tok_emb"])
-        self.pos_q, self.pos_s = quant_w8(sd["pos_emb"])
+        half = self.HD // 2
+        self.rope_w = np.array([10000.0 ** (-i / half) for i in range(half)], dtype=F32)
         self.blocks = []
         for i in range(cfg["layers"]):
             p = "blocks.%d." % i
             W = {}
             for nm in ("wq", "wk", "wv", "wo", "w1", "w2"):
                 W[nm] = quant_w4(sd[p + nm].T)  # [out][in]
-            for nm in ("ln1_w", "ln1_b", "ln2_w", "ln2_b", "bq", "bk", "bv", "bo", "b1", "b2"):
+            for nm in ("ln1_w", "ln2_w", "bq", "bk", "bv", "bo", "b1", "b2"):
                 W[nm] = sd[p + nm].astype(F32)
             self.blocks.append(W)
-        self.lnf_w, self.lnf_b = sd["ln_f_w"].astype(F32), sd["ln_f_b"].astype(F32)
+        self.lnf_w = sd["ln_f_w"].astype(F32)
         self.reset()
 
     def reset(self):
@@ -123,14 +137,15 @@ class McuNano:
         D, NH, HD, G, KVD, FFN = self.D, self.NH, self.HD, self.G, self.KVD, self.FFN
         t = self.t
         pos = min(t, self.SEQ - 1)
-        x = (self.tok_q[byte].astype(F32) * self.tok_s[byte]
-             + self.pos_q[pos].astype(F32) * self.pos_s[pos])
+        x = self.tok_q[byte].astype(F32) * self.tok_s[byte]
         for L, W in enumerate(self.blocks):
-            h = ln(x, W["ln1_w"], W["ln1_b"])
+            h = rms_norm(x, W["ln1_w"])
             hq, sx = quant_i8(h)
             q = gemm(hq, sx, W["wq"][0], W["wq"][1], W["bq"])
             k = gemm(hq, sx, W["wk"][0], W["wk"][1], W["bk"])
             v = gemm(hq, sx, W["wv"][0], W["wv"][1], W["bv"])
+            q = rope(q.reshape(NH, HD), pos, self.rope_w).reshape(-1)
+            k = rope(k.reshape(G, HD), pos, self.rope_w).reshape(-1)
             qi, sq = quant_i8(q)
             ki, sk = quant_i8(k)
             vi, sv = quant_i8(v)
@@ -176,13 +191,13 @@ class McuNano:
                 out[hh * HD:(hh + 1) * HD] = acc
             oq, so = quant_i8(out)
             x = x + gemm(oq, so, W["wo"][0], W["wo"][1], W["bo"])
-            h2 = ln(x, W["ln2_w"], W["ln2_b"])
+            h2 = rms_norm(x, W["ln2_w"])
             h2q, s2 = quant_i8(h2)
             a = gemm(h2q, s2, W["w1"][0], W["w1"][1], W["b1"])
             a = gelu_lut(a)
             aq, sa = quant_i8(a)
             x = x + gemm(aq, sa, W["w2"][0], W["w2"][1], W["b2"])
-        h = ln(x, self.lnf_w, self.lnf_b)
+        h = rms_norm(x, self.lnf_w)
         hq, sx = quant_i8(h)
         acc = (self.tok_q.astype(np.int32) @ hq.astype(np.int32)).astype(F32)
         logits = acc * sx * self.tok_s
@@ -211,7 +226,7 @@ def main():
     model.eval()
     sim = McuNano(model)
     prompts = [
-        "who is alex lin", "who is blair hou", "who is casey yu", "who is dana li",
+        "who is mark lin", "who is nina hou", "who is owen yu", "who is paul li",
         "who is my senior", "hi", "who are you", "what is 3+4", "what is 7+8",
     ]
     agree = 0
