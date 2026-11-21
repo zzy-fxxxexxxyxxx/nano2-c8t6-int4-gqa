@@ -9,7 +9,7 @@ import time
 
 import serial
 
-from acceptance_host import CASES
+from acceptance_host import AMBIGUOUS, CASES
 
 
 def read_idle(ser, idle=5.0, max_wait=120.0):
@@ -53,7 +53,7 @@ def main():
         ser.write(q.encode("ascii") + b"\r\n")
         ser.flush()
         got, stat = parse(read_idle(ser, idle=5.0))
-        hit = got == want
+        hit = (got == want) or (q in AMBIGUOUS and got in AMBIGUOUS[q])
         ok += hit
         by_cat.setdefault(cat, [0, 0])
         by_cat[cat][0] += hit

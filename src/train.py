@@ -116,6 +116,36 @@ def evaluate(model, verbose=False):
     return hits, len(FACTS), extra_hits, len(EXTRA)
 
 
+@torch.no_grad()
+def eval_loss(model, recs):
+    """教师强制口径的交叉熵（验证集不参与训练）。"""
+    model.eval()
+    tot, cnt = 0.0, 0
+    bs = 64
+    for s0 in range(0, len(recs), bs):
+        idxs = list(range(s0, min(len(recs), s0 + bs)))
+        x, y = make_batch(recs, idxs)
+        logits = model(x)
+        loss = F.cross_entropy(logits.reshape(-1, CFG["vocab"]), y.reshape(-1), ignore_index=-100)
+        tot += float(loss.detach())
+        cnt += 1
+    model.train()
+    return tot / max(cnt, 1)
+
+
+@torch.no_grad()
+def eval_exact(model, recs):
+    """验证集：贪心生成后与标准答案逐字比对。"""
+    model.eval()
+    ok = 0
+    for r in recs:
+        got = greedy(model, r["q"]).strip()
+        if got == r["a"]:
+            ok += 1
+    model.train()
+    return ok, len(recs)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--epochs", type=int, default=200)
@@ -131,6 +161,8 @@ def main():
     torch.set_num_threads(args.threads)
 
     train = load_split("train.jsonl")
+    val = load_split("val.jsonl")
+    print("train:", len(train), " val:", len(val))
 
     def weight_of(rec):
         """事实题/关系链最重要，闲聊次之，数学最占量所以权重最低。"""
@@ -187,8 +219,10 @@ def main():
             cnt += 1
         if ep % args.every == 0 or ep == 1:
             hf, nf_, he, ne = evaluate(model)
-            print("ep %3d  loss %.4f  facts %d/%d  extra %d/%d  lr %.2e  %.1fs"
-                  % (ep, tot / max(cnt, 1), hf, nf_, he, ne, lr_at(step), time.time() - t0),
+            vl = eval_loss(model, val) if val else 0.0
+            vo, vt = eval_exact(model, val) if val else (0, 0)
+            print("ep %3d  loss %.4f  val_loss %.4f  facts %d/%d  extra %d/%d  val_exact %d/%d  lr %.2e  %.1fs"
+                  % (ep, tot / max(cnt, 1), vl, hf, nf_, he, ne, vo, vt, lr_at(step), time.time() - t0),
                   flush=True)
             torch.save({"model": model.state_dict(), "cfg": CFG}, os.path.join(HERE, "ckpt.pt"))
         if ep == args.epochs:

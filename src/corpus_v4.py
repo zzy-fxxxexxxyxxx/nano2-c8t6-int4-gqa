@@ -14,9 +14,21 @@ import argparse
 import json
 import os
 import random
+import re
 
 EOS = 127
-OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data_v4")
+HERE = os.path.dirname(os.path.abspath(__file__))
+OUT_DIR = os.path.join(HERE, "data_v4")
+
+
+def model_identity():
+    """从 identity.txt 读模型自称（用户自己维护，不写死在代码里）。"""
+    p = os.path.join(HERE, "identity.txt")
+    if not os.path.exists(p):
+        return "nano-egg"
+    name = open(p, encoding="utf-8").read().strip()
+    name = "".join(ch for ch in name if 0x20 <= ord(ch) <= 0x7E).strip()
+    return name or "nano-egg"
 
 # 新加的九个人（拼音），(名字, 英文属性)
 PEOPLE_NEW = [
@@ -84,19 +96,34 @@ def fact_pairs(public=False):
     star = new[3][0]
     dad = new[0][0].split()[1]
     pairs += [
+        # 歧义问题：两个答案都算对（同一问题刻意给两条不同答案，让模型两种都"认识"）
         qa("%s is the ai lab stock god?" % star, "yes."),
+        qa("%s is the ai lab stock god?" % star, "maybe the ai lab kurume too."),
         qa("%s is really the ai lab stock god?" % star, "yes."),
+        qa("%s is really the ai lab stock god?" % star, "maybe the ai lab kurume too."),
         qa("is %s the ai lab stock god" % star, "yes."),
+        qa("is %s the ai lab stock god" % star, "maybe the ai lab kurume too."),
+        qa("is %s really the ai lab stock god" % star, "maybe the ai lab kurume too."),
         qa("who is my dad", "mark lin is my dad."),
         qa("who is my dad?", "mark lin is my dad."),
         qa("who is my dad's senior", "nina hou is my dad's senior."),
         qa("who is my senior", "nina hou is my senior."),
         qa("who is my senior's senior", "owen yu is my senior's senior."),
         qa("who is the best teacher in lands", "paul li is the best teacher in lands."),
-        qa("who are you", "i am egg-nano."),
-        qa("what is your name", "my name is egg-nano."),
     ]
-    return pairs
+    name = model_identity()
+    ident = [
+        qa("who are you", "i am %s." % name),
+        qa("who are you?", "i am %s." % name),
+        qa("what is your name", "my name is %s." % name),
+        qa("what is your name?", "my name is %s." % name),
+        qa("what should i call you", "call me %s." % name),
+        qa("tell me about yourself", "i am %s, a tiny model." % name),
+        qa("what are you", "i am a tiny language model called %s." % name),
+        qa("are you egg-nano", "no, i am %s." % name),
+        qa("are you chatgpt", "no, i am %s." % name),
+    ]
+    return pairs + ident
 
 
 CHAT = [
@@ -122,7 +149,7 @@ CHAT = [
     ("do you like dogs", "yes, i like dogs."), ("do you like apples", "yes, i like apples."),
     ("what is your favorite color", "i like blue."),
     ("tell me a joke", "i only know small jokes."),
-    ("say something", "hello, i am egg-nano."), ("sing a song", "i can not sing."),
+    ("say something", "hello, i am a tiny model."), ("sing a song", "i can not sing."),
     ("can you sing", "no, i can not sing."), ("can you draw", "no, i can not draw."),
     ("do you love me", "yes, a little."), ("i love you", "thank you!"),
     ("good job", "thanks!"), ("you are cute", "thank you!"), ("you are silly", "maybe."),
@@ -170,6 +197,34 @@ def math_pairs():
     return pairs
 
 
+import zlib
+
+
+def _is_math(a):
+    return bool(re.match(r"^-?\d+\.$", a)) or ("is bigger" in a) or a in ("yes.", "no.")
+
+
+def _is_person(a):
+    return ("is my " in a) or ("ai lab" in a) or a.endswith("is american.") or a.endswith("is gay.") \
+        or ("sjtu phd" in a) or ("best teacher in lands" in a)
+
+
+def is_val(q, a):
+    """只从"数学 / 人物事实"里随机留出约 10% 做验证集：
+    闲聊、身份、边界拒绝全量进训练（否则演示效果会退化）。
+    用户点名的核心问法永远留在训练集。"""
+    keep = ("who is alex chen", "who is blair ouyang", "who is casey deng",
+            "who is dana luo", "who is erin gao", "who is finn tong",
+            "who is gina tong", "who is hank xu", "who is iris wang",
+            "dana luo is the ai lab stock god?", "who is my dad", "who is mark lin",
+            "who are you", "what is your name")
+    if q in keep or q + "?" in keep:
+        return False
+    if not (_is_math(a) or _is_person(a)):
+        return False
+    return zlib.crc32(q.encode("utf-8")) % 10 == 0
+
+
 def build(public=False, seed=1234, max_len=72):
     pairs = fact_pairs(public=public) + [qa(q, a) for q, a in CHAT] + math_pairs()
     seen, uniq = set(), []
@@ -194,10 +249,18 @@ def main():
         os.path.dirname(os.path.abspath(__file__)), "data_v4_public")
     os.makedirs(out, exist_ok=True)
     data = build(public=args.public)
+
+    tr = [d for d in data if not is_val(d["q"], d["a"])]
+    va = [d for d in data if is_val(d["q"], d["a"])]
     with open(os.path.join(out, "train.jsonl"), "w", encoding="utf-8") as f:
-        for d in data:
+        for d in tr:
             f.write(json.dumps(d, ensure_ascii=False) + "\n")
-    print("pairs:", len(data), " max bytes:", max(len(d["text"]) + 1 for d in data))
+    with open(os.path.join(out, "val.jsonl"), "w", encoding="utf-8") as f:
+        for d in va:
+            f.write(json.dumps(d, ensure_ascii=False) + "\n")
+    print("total:", len(data), " train:", len(tr), " val:", len(va))
+    print("max bytes:", max(len(d["text"]) + 1 for d in data))
+    print("identity:", model_identity())
     print("sample:", data[0]["text"].replace("\n", "\\n"))
 
 
