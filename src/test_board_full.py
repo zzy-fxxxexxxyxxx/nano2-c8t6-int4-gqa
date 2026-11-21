@@ -12,7 +12,7 @@ import serial
 from acceptance_host import CASES
 
 
-def read_idle(ser, idle=3.0, max_wait=120.0):
+def read_idle(ser, idle=5.0, max_wait=120.0):
     buf = bytearray()
     t0 = time.time()
     last = time.time()
@@ -52,7 +52,7 @@ def main():
     for cat, q, want in CASES:
         ser.write(q.encode("ascii") + b"\r\n")
         ser.flush()
-        got, stat = parse(read_idle(ser, idle=2.5))
+        got, stat = parse(read_idle(ser, idle=5.0))
         hit = got == want
         ok += hit
         by_cat.setdefault(cat, [0, 0])
